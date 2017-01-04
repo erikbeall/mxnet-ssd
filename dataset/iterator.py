@@ -3,6 +3,10 @@ import numpy as np
 import cv2
 from tools.image_processing import resize, transform
 from tools.rand_sampler import RandSampler
+import random
+from scipy import misc
+from scipy import ndimage
+from scipy.stats import chi2,norm
 
 class DetIter(mx.io.DataIter):
     """
@@ -60,6 +64,21 @@ class DetIter(mx.io.DataIter):
         if rand_seed:
             np.random.seed(rand_seed) # fix random seed
         self._max_crop_trial = max_crop_trial
+
+        # create mask to clamp edges, multiply by mask that goes to zero radially
+        mask=np.ones(self._data_shape,dtype=np.float)
+        mask[0:int(0.05*self._data_shape[0]),:]=0;
+        mask[int(0.95*self._data_shape[0]):,:]=0;
+        mask[:,0:int(0.05*self._data_shape[1])]=0;
+        mask[:,int(0.95*self._data_shape[1]):]=0;
+        self._maskf=ndimage.gaussian_filter(mask, sigma=15.0, mode='reflect')
+
+        # create warp function interpolator
+        xpos=np.arange(0,self._data_shape[0],1)
+        ypos=np.arange(0,self._data_shape[1],1)
+        xx, yy = np.meshgrid(xpos, ypos)
+        self._xx=xx
+        self._yy=yy
 
         self._current = 0
         self._size = imdb.num_images
@@ -143,6 +162,7 @@ class DetIter(mx.io.DataIter):
         """
         perform data augmentations: crop, mirror, resize, sub mean, swap channels...
         """
+        # _rand_samplers is set to config.TRAIN.RAND_SAMPLERS list when training
         if self.is_train and self._rand_samplers:
             rand_crops = []
             for rs in self._rand_samplers:
@@ -168,6 +188,7 @@ class DetIter(mx.io.DataIter):
                     offset_y = 0 - ymin
                     data_bak = data
                     data = np.full((new_height, new_width, 3), 128.)
+                    # EBB could fill with random data, although will increase time taken
                     data[offset_y:offset_y+height, offset_x:offset_x + width, :] = data_bak
                 label = rand_crops[index][1]
 
@@ -180,11 +201,53 @@ class DetIter(mx.io.DataIter):
                 label[valid_mask, 3] = tmp
 
         if self.is_train:
+            # EBB get rid of LANCZOS4 
+            # not a big difference with CUBIC and takes more time. 
+            # Worse, it introduces some artifacts with strong white/black (ringing) which I expect with geese at least.
             interp_methods = [cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, \
-                              cv2.INTER_NEAREST, cv2.INTER_LANCZOS4]
+                              cv2.INTER_NEAREST]
         else:
             interp_methods = [cv2.INTER_LINEAR]
         interp_method = interp_methods[int(np.random.uniform(0, 1) * len(interp_methods))]
         data = resize(data, self._data_shape, interp_method)
+
+        # EBB insert augmentations
+        if self.is_train:
+            # displacement field MxNx2 (x,y displacements in pixel units) where MxN defines the output matrix size
+            # 2D slicing
+            warpfield=np.zeros((data.shape[0],data.shape[1],2))
+            warpfield[:,:,0]=misc.imresize(norm.rvs(loc=0,scale=2.5,size=(data.shape[0]/32,data.shape[1]/32)),(data.shape[0],data.shape[1]),mode='F')*self._maskf
+            warpfield[:,:,1]=misc.imresize(norm.rvs(loc=0,scale=2.5,size=(data.shape[0]/32,data.shape[1]/32)),(data.shape[0],data.shape[1]),mode='F')*self._maskf
+            # adjust the inputmesh grid by the warpfield
+            xxw=self._xx+np.round(warpfield[:,:,0])
+            yyw=self._yy+np.round(warpfield[:,:,1])
+            xxw=xxw.astype(int)
+            yyw=yyw.astype(int)
+            xxw[xxw>np.max(self._xx)]=np.max(self._xx)
+            yyw[yyw>np.max(self._yy)]=np.max(self._yy)
+            xxw[xxw<np.min(self._xx)]=np.min(self._xx)
+            yyw[yyw<np.min(self._yy)]=np.min(self._yy)
+            dataw=np.copy(data[yyw,xxw])
+            # speckle noise - add these in double format, rescale and fit to uint8 range - note, one for each channel
+            speckle=chi2.rvs(abs(random.normalvariate(15,5)),size=data.shape);
+            # speckle alpha parameter - max it out at 0.3
+            alpha_speckle=min(abs(random.normalvariate(0.15,0.1)),0.25);
+            # fog - blur a speckle map and add it - note, same one across all channels (assume its in the optical path)
+            fog=ndimage.uniform_filter(chi2.rvs(abs(random.normalvariate(15,7)),size=data.shape[0:2]), 15, mode='reflect');
+            fog=(fog-np.min(fog))*256/(np.max(fog)-np.min(fog));
+            # max fog alpha parameter at 0.35
+            alpha_fog=min(abs(random.normalvariate(0.1,0.1)),0.25);
+            # blur
+            datawb=np.copy(dataw);
+            # max out blur at 3
+            blurfact=max(min(abs(random.normalvariate(1.25,1.5)),1.5),0.5)
+            datawb[:,:,0]=ndimage.gaussian_filter(dataw[:,:,0], sigma=blurfact, mode='reflect')
+            datawb[:,:,1]=ndimage.gaussian_filter(dataw[:,:,1], sigma=blurfact, mode='reflect')
+            datawb[:,:,2]=ndimage.gaussian_filter(dataw[:,:,2], sigma=blurfact, mode='reflect')
+            data=np.copy(datawb)
+            for chan in range(0,3,1):
+                data[:,:,chan]=np.uint8(((1-alpha_fog-alpha_speckle)*np.double(datawb[:,:,chan]))+alpha_fog*fog+speckle[:,:,chan]*alpha_speckle);
+
+        # original functions: transform data (mean pixel removal) and return the resulting label and image
         data = transform(data, self._mean_pixels)
         return data, label

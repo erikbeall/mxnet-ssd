@@ -28,13 +28,14 @@ class YoloFormat(Imdb):
         default is True
     """
     def __init__(self, name, classes, list_file, image_dir, label_dir, \
-                 extension='.jpg', label_extension='.txt', shuffle=True):
+                 extension='.jpg', label_extension='.txt', shuffle=True,is_train=False):
         if isinstance(classes, list) or isinstance(classes, tuple):
             num_classes = len(classes)
         elif isinstance(classes, str):
             with open(classes, 'r') as f:
                 classes = [l.strip() for l in f.readlines()]
                 num_classes = len(classes)
+                print('classes=%s, num_classes=%d'%(classes,num_classes))
         else:
             raise ValueError, "classes should be list/tuple or text file"
         assert num_classes > 0, "number of classes must > 0"
@@ -46,10 +47,12 @@ class YoloFormat(Imdb):
         self.label_dir = label_dir
         self.extension = extension
         self.label_extension = label_extension
+        self.is_train = is_train
 
         self.image_set_index = self._load_image_set_index(shuffle)
         self.num_images = len(self.image_set_index)
-        self.labels = self._load_image_labels()
+        if self.is_train:
+            self.labels = self._load_image_labels()
 
 
     def _load_image_set_index(self, shuffle):
@@ -130,11 +133,12 @@ class YoloFormat(Imdb):
         labels packed in [num_images x max_num_objects x 5] tensor
         """
         temp = []
-        max_objects = 0
+        max_objects = 24
 
         # load ground-truths
         for idx in self.image_set_index:
             label_file = self._label_path_from_index(idx)
+            #print('label_file='+label_file)
             with open(label_file, 'r') as f:
                 label = []
                 for line in f.readlines():

@@ -2,6 +2,7 @@ import os
 import sys
 import importlib
 from dataset.pascal_voc import PascalVoc
+from dataset.yolo_format import YoloFormat
 from dataset.iterator import DetIter
 from detect.detector import Detector
 from config.config import cfg
@@ -49,6 +50,18 @@ def evaluate_net(net, dataset, devkit_path, mean_pixels, data_shape,
         if not year:
             year = '2007'
         imdb = PascalVoc(sets, year, devkit_path, shuffle=False, is_train=False)
+        data_iter = DetIter(imdb, batch_size, data_shape, mean_pixels,
+            rand_samplers=[], rand_mirror=False, is_train=False, shuffle=False)
+        sys.path.append(os.path.join(cfg.ROOT_DIR, 'symbol'))
+        net = importlib.import_module("symbol_" + net) \
+            .get_symbol(imdb.num_classes, nms_thresh, force_nms)
+        model_prefix += "_" + str(data_shape)
+        detector = Detector(net, model_prefix, epoch, data_shape, mean_pixels, batch_size, ctx)
+        logger.info("Start evaluation with {} images, be patient...".format(imdb.num_images))
+        detections = detector.detect(data_iter)
+        imdb.evaluate_detections(detections)
+    elif dataset == 'yolo':
+        imdb = YoloFormat(sets, devkit_path+'/class_list.txt', devkit_path+'/data_list_'+image_set+'.txt', devkit_path+'/images', devkit_path+'/labels', '.jpg', '.txt', shuffle=False, is_train=False))
         data_iter = DetIter(imdb, batch_size, data_shape, mean_pixels,
             rand_samplers=[], rand_mirror=False, is_train=False, shuffle=False)
         sys.path.append(os.path.join(cfg.ROOT_DIR, 'symbol'))
