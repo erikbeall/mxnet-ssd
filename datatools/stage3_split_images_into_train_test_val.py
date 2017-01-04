@@ -4,7 +4,7 @@ import os
 import glob
 import random
 
-fnames=['data_list_full_dog.txt','data_list_full_golf.txt','data_list_full_goose.txt','data_list_full_lawn.txt','data_list_full_person.txt']
+fnames=['data_list_full_dog.txt','data_list_full_golf.txt']
 
 for i in range(0,len(fnames),1):
     fp=open(fnames[i])
