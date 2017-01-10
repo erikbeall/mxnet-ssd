@@ -5,14 +5,15 @@ import os
 import importlib
 import sys
 from detect.detector import Detector
+import cv2
+import time
+import matplotlib.pyplot as plt
+
+#plt.ion()
 
 CLASSES = ('goose', 'person')
 CLASSES = ('goose', 'person', 'golfcart', 'lawnmower', 'dog')
-'''CLASSES = ('aeroplane', 'bicycle', 'bird', 'boat',
-           'bottle', 'bus', 'car', 'cat', 'chair',
-           'cow', 'diningtable', 'dog', 'horse',
-           'motorbike', 'person', 'pottedplant',
-           'sheep', 'sofa', 'train', 'tvmonitor')'''
+# --cpu --images <> --thresh 0.25 --epoch 200
 
 def get_detector(net, prefix, epoch, data_shape, mean_pixels, ctx,
                  nms_thresh=0.5, force_nms=True):
@@ -47,8 +48,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Single-shot detection network demo')
     parser.add_argument('--network', dest='network', type=str, default='vgg16_reduced',
                         choices=['vgg16_reduced', 'ssd_300'], help='which network to use')
-    parser.add_argument('--images', dest='images', type=str, default='./data/demo/dog.jpg',
-                        help='run demo with images, use comma(without space) to seperate multiple images')
     parser.add_argument('--dir', dest='dir', nargs='?',
                         help='demo image directory, optional', type=str)
     parser.add_argument('--ext', dest='extension', help='image extension, optional',
@@ -81,20 +80,49 @@ def parse_args():
     return args
 
 if __name__ == '__main__':
+    cap = cv2.VideoCapture(0)
     args = parse_args()
+    # get initial image and display
+    ret, frame = cap.read()
+    im = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    cv2.imwrite('temp.jpg',im)
+    result=cv2.imread('temp.jpg');
+    result=cv2.imread('detection.jpg');
+    cv2.imshow('frame',result)
+    cv2.waitKey(500)
     if args.cpu:
         ctx = mx.cpu()
     else:
         ctx = mx.gpu(args.gpu_id)
 
-    # parse image list
-    image_list = [i.strip() for i in args.images.split(',')]
-    assert len(image_list) > 0, "No valid image specified to detect"
-
     detector = get_detector(args.network, args.prefix, args.epoch,
                             args.data_shape,
                             (args.mean_r, args.mean_g, args.mean_b),
                             ctx, args.nms_thresh, args.force_nms)
-    # run detection
-    detector.detect_and_visualize(image_list, args.dir, args.extension,
-                                  CLASSES, args.thresh, args.show_timer)
+    # run detection in loop
+    while True:
+        print('capturing frame')
+        cap.release()
+        cap.open(0)
+        ret, frame = cap.read()
+        #ret = cap.grab()
+        #ret, frame = cap.retrieve()
+        # Our operations on the frame come here
+        im = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        cv2.imwrite('temp.jpg',im)
+        print('  running detector')
+        detector.detect_and_visualize_inplace('temp.jpg', args.dir, args.extension,CLASSES, args.thresh, args.show_timer)
+        print('  done with detection, displaying result');
+        result=cv2.imread('temp_detection.jpg');
+        # Display the resulting frame
+        #cv2.namedWindow(winname)
+        cv2.imshow('frame',result)
+        time.sleep(0.1)
+        #plt.imshow(result)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+        time.sleep(0.5)
+
+    cap.release()
+    cv2.destroyAllWindows()
+
