@@ -8,6 +8,7 @@ from initializer import CustomInitializer
 from metric import MultiBoxMetric
 from dataset.iterator import DetIter
 from dataset.pascal_voc import PascalVoc
+from dataset.yolo_format import YoloFormat
 from dataset.concat_db import ConcatDB
 from config.config import cfg
 
@@ -45,10 +46,41 @@ def load_pascal(image_set, year, devkit_path, shuffle=False):
     imdbs = []
     for s, y in zip(image_set, year):
         imdbs.append(PascalVoc(s, y, devkit_path, shuffle, is_train=True))
+    print(imdbs)
     if len(imdbs) > 1:
         return ConcatDB(imdbs, shuffle)
     else:
         return imdbs[0]
+
+def load_yolo(image_set, devkit_path, shuffle=False):
+    """
+    wrapper function for loading yolo-style dataset
+
+    Parameters:
+    ----------
+    image_set : str
+        train, trainval...
+    devkit_path : str
+        root directory of dataset
+    shuffle : bool
+        whether to shuffle initial list
+
+    Returns:
+    ----------
+    Imdb
+    """
+    image_set = [y.strip() for y in image_set.split(',')]
+    assert image_set, "No image_set specified"
+
+    imdbs = []
+    image_set=image_set[0]
+    imdbs.append(YoloFormat(image_set, devkit_path+'/class_list.txt', devkit_path+'/data_list_'+image_set+'.txt', devkit_path+'/images', devkit_path+'/labels', '.jpg', '.txt', shuffle=True, is_train=True))
+    print(imdbs)
+    if len(imdbs) > 1:
+        return ConcatDB(imdbs, shuffle)
+    else:
+        return imdbs[0]
+
 
 def convert_pretrained(name, args):
     """
@@ -166,6 +198,13 @@ def train_net(net, dataset, image_set, year, devkit_path, batch_size,
             val_imdb = load_pascal(val_set, val_year, devkit_path, False)
         else:
             val_imdb = None
+    elif dataset == 'yolo':
+        imdb = load_yolo(image_set, devkit_path, cfg.TRAIN.INIT_SHUFFLE)
+        print('val_set=%s'%val_set)
+        if val_set:
+            val_imdb = load_yolo(val_set, devkit_path, False)
+        else:
+            val_imdb = None
     else:
         raise NotImplementedError, "Dataset " + dataset + " not supported"
 
@@ -259,3 +298,4 @@ def train_net(net, dataset, image_set, year, devkit_path, batch_size,
             aux_params=auxs,
             allow_missing=True,
             monitor=monitor)
+

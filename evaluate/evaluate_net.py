@@ -61,7 +61,7 @@ def evaluate_net(net, dataset, devkit_path, mean_pixels, data_shape,
         detections = detector.detect(data_iter)
         imdb.evaluate_detections(detections)
     elif dataset == 'yolo':
-        imdb = YoloFormat(sets, devkit_path+'/class_list.txt', devkit_path+'/data_list_'+image_set+'.txt', devkit_path+'/images', devkit_path+'/labels', '.jpg', '.txt', shuffle=False, is_train=False))
+        imdb = YoloFormat(sets, devkit_path+'/class_list.txt', devkit_path+'/data_list_val.txt', devkit_path+'/images', devkit_path+'/labels', '.jpg', '.txt', shuffle=False, is_train=False)
         data_iter = DetIter(imdb, batch_size, data_shape, mean_pixels,
             rand_samplers=[], rand_mirror=False, is_train=False, shuffle=False)
         sys.path.append(os.path.join(cfg.ROOT_DIR, 'symbol'))

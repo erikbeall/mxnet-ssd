@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from imdb import Imdb
+from evaluate.eval_ssd import ssd_eval
 
 
 class YoloFormat(Imdb):
@@ -44,6 +45,7 @@ class YoloFormat(Imdb):
         self.num_classes = num_classes
         self.list_file = list_file
         self.image_dir = image_dir
+        self.devkit_path = image_dir[:image_dir.find('images')-1]
         self.label_dir = label_dir
         self.extension = extension
         self.label_extension = label_extension
@@ -165,3 +167,71 @@ class YoloFormat(Imdb):
                                'constant', constant_values=(-1, -1))
             labels.append(label)
         return np.array(labels)
+
+    @property
+    def cache_path(self):
+        """
+        make a directory to store all caches
+
+        Returns:
+        ---------
+            cache path
+        """
+        cache_path = os.path.join(os.path.dirname(__file__), '..', 'cache')
+        if not os.path.exists(cache_path):
+            os.mkdir(cache_path)
+        return cache_path
+
+    def get_result_file_template(self):
+        """
+        this is a template
+        <devkit_path>/results/det_val_<classname>.txt
+
+        Returns:
+        ----------
+            a string template
+        """
+        res_file_folder = os.path.join(self.devkit_path, 'results')
+        filename = 'det_val_{:s}.txt'
+        path = os.path.join(res_file_folder, filename)
+        return path
+
+    def evaluate_detections(self, detections):
+        """
+        top level evaluations
+        Parameters:
+        ----------
+        detections: list
+            result list, each entry is a matrix of detections
+        Returns:
+        ----------
+            None
+        """
+        # make all these folders for results
+        result_dir = os.path.join(self.devkit_path, 'results')
+        if not os.path.exists(result_dir):
+            os.mkdir(result_dir)
+        # write SSD results
+        for cls_ind, cls in enumerate(self.classes):
+            print 'Writing {} SSD results file'.format(cls)
+            filename = self.get_result_file_template().format(cls)
+            with open(filename, 'wt') as f:
+                for im_ind, index in enumerate(self.image_set_index):
+                    dets = detections[im_ind]
+                    if dets.shape[0] < 1:
+                        continue
+                    for k in range(dets.shape[0]):
+                        if (int(dets[k, 0]) == cls_ind):
+                            f.write('{:s} {:.3f} {:.3f} {:.3f} {:.3f} {:.3f}\n'.format(index, dets[k, 1], dets[k, 2], dets[k, 3],dets[k, 4], dets[k, 5]))
+
+        annopath = os.path.join(self.devkit_path, 'labels','{:s}.txt')
+        imageset_file = os.path.join(self.devkit_path, 'data_list_val.txt')
+        cache_dir = os.path.join(self.cache_path, self.name)
+        aps = []
+        for cls_ind, cls in enumerate(self.classes):
+            filename = self.get_result_file_template().format(cls)
+            rec, prec, ap = ssd_eval(filename, annopath, imageset_file, cls, cache_dir, ovthresh=0.5)
+            aps += [ap]
+            print('AP for {} = {:.4f}'.format(cls, ap))
+        print('Mean AP = {:.4f}'.format(np.mean(aps)))
+

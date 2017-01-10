@@ -1,93 +1,96 @@
 """
-given a pascal voc imdb, compute mAP
+given a SSD/YOLO imdb, compute mAP
 """
 
 import numpy as np
 import os
 import cPickle
 
+CLASSES = ['goose', 'person','golfcart','lawncare','dog']
 
-def parse_voc_rec(filename):
+def parse_ssd_rec(filename):
     """
-    parse pascal voc record into a dictionary
-    :param filename: xml file path
+    parse ssd record into a dictionary
+    :param filename: txt file path
     :return: list of dict
+    NOTE: original (yolo) label file is in xcenter, ycenter, width, height
+          while bounding box detections are xmin, ymin, xmax, ymax
     """
-    import xml.etree.ElementTree as ET
-    tree = ET.parse(filename)
     objects = []
-    for obj in tree.findall('object'):
-        obj_dict = dict()
-        obj_dict['name'] = obj.find('name').text
-        obj_dict['difficult'] = int(obj.find('difficult').text)
-        bbox = obj.find('bndbox')
-        obj_dict['bbox'] = [int(bbox.find('xmin').text),
-                            int(bbox.find('ymin').text),
-                            int(bbox.find('xmax').text),
-                            int(bbox.find('ymax').text)]
-        objects.append(obj_dict)
+    with open(filename, 'r') as f:
+        for line in f.readlines():
+            obj_dict = dict()
+            temp_label = line.strip().split()
+            assert len(temp_label) == 5, "Invalid label file" + label_file
+            cls_id = int(temp_label[0])
+            x = float(temp_label[1])
+            y = float(temp_label[2])
+            half_width = float(temp_label[3]) / 2
+            half_height = float(temp_label[4]) / 2
+            xmin = x - half_width
+            ymin = y - half_height
+            xmax = x + half_width
+            ymax = y + half_height
+            obj_dict['bbox'] = [xmin,ymin,xmax,ymax]
+            obj_dict['name'] = CLASSES[cls_id]
+            objects.append(obj_dict)
     return objects
 
 
-def voc_ap(rec, prec, use_07_metric=False):
+def ssd_ap(rec, prec):
     """
     average precision calculations
     [precision integrated to recall]
     :param rec: recall
     :param prec: precision
-    :param use_07_metric: 2007 metric is 11-recall-point based AP
     :return: average precision
     """
-    if use_07_metric:
-        ap = 0.
-        for t in np.arange(0., 1.1, 0.1):
-            if np.sum(rec >= t) == 0:
-                p = 0
-            else:
-                p = np.max(prec[rec >= t])
-            ap += p / 11.
-    else:
-        # append sentinel values at both ends
-        mrec = np.concatenate([0.], rec, [1.])
-        mpre = np.concatenate([0.], prec, [0.])
+    # append sentinel values at both ends
+    #print('rec=%s, prec=%s'%(str(rec),str(prec)))
+    mrec = np.concatenate(([0.], rec, [1.]))
+    mpre = np.concatenate(([0.], prec, [0.]))
 
-        # compute precision integration ladder
-        for i in range(mpre.size - 1, 0, -1):
-            mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+    # compute precision integration ladder
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
 
-        # look for recall value changes
-        i = np.where(mrec[1:] != mrec[:-1])[0]
+    # look for recall value changes
+    i = np.where(mrec[1:] != mrec[:-1])[0]
 
-        # sum (\delta recall) * prec
-        ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    # sum (\delta recall) * prec
+    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
     return ap
 
 
-def voc_eval(detpath, annopath, imageset_file, classname, cache_dir, ovthresh=0.5, use_07_metric=False):
+def ssd_eval(detpath, annopath, imageset_file, classname, cache_dir, ovthresh=0.5):
     """
-    pascal voc evaluation
+    SSD evaluation
     :param detpath: detection results detpath.format(classname)
     :param annopath: annotations annopath.format(classname)
     :param imageset_file: text file containing list of images
     :param classname: category name
     :param cache_dir: caching annotations
     :param ovthresh: overlap threshold
-    :param use_07_metric: whether to use voc07's 11 point ap computation
     :return: rec, prec, ap
     """
-    print('*********** in evaluation in voc_eval.py *****************')
     if not os.path.isdir(cache_dir):
         os.mkdir(cache_dir)
     cache_file = os.path.join(cache_dir, 'annotations.pkl')
     with open(imageset_file, 'r') as f:
         lines = f.readlines()
     image_filenames = [x.strip() for x in lines]
+    recs = {}
+    for ind, image_filename in enumerate(image_filenames):
+        recs[image_filename] = parse_ssd_rec(annopath.format(image_filename))
+        #if ind % 100 == 0:
+        #    print 'reading annotations for {:d}/{:d}'.format(ind + 1, len(image_filenames))
 
+    '''
     # load annotations from cache
     if not os.path.isfile(cache_file):
         recs = {}
         for ind, image_filename in enumerate(image_filenames):
-            recs[image_filename] = parse_voc_rec(annopath.format(image_filename))
+            recs[image_filename] = parse_ssd_rec(annopath.format(image_filename))
             if ind % 100 == 0:
                 print 'reading annotations for {:d}/{:d}'.format(ind + 1, len(image_filenames))
         print 'saving annotations cache to {:s}'.format(cache_file)
@@ -96,18 +99,19 @@ def voc_eval(detpath, annopath, imageset_file, classname, cache_dir, ovthresh=0.
     else:
         with open(cache_file, 'r') as f:
             recs = cPickle.load(f)
+    '''
 
     # extract objects in :param classname:
     class_recs = {}
     npos = 0
     for image_filename in image_filenames:
         objects = [obj for obj in recs[image_filename] if obj['name'] == classname]
+        # bbox is from the label record - these are positives
         bbox = np.array([x['bbox'] for x in objects])
-        difficult = np.array([x['difficult'] for x in objects]).astype(np.bool)
         det = [False] * len(objects)  # stand for detected
-        npos = npos + sum(~difficult)
+        npos = npos + len(bbox)
+        #print('image filename= %s, len(bbox)=%d, len(det)=%d, bbox=%s'%(image_filename,len(bbox),len(det),str(bbox)))
         class_recs[image_filename] = {'bbox': bbox,
-                                      'difficult': difficult,
                                       'det': det}
 
     # read detections
@@ -119,6 +123,9 @@ def voc_eval(detpath, annopath, imageset_file, classname, cache_dir, ovthresh=0.
     image_ids = [x[0] for x in splitlines]
     confidence = np.array([float(x[1]) for x in splitlines])
     bbox = np.array([[float(z) for z in x[2:]] for x in splitlines])
+    #print('detected bbox = %s, %s, %s'%(str(image_ids),str(confidence),str(bbox)))
+    if (len(bbox)==0):
+        return (0.0, 0.0, 0.0)
 
     # sort by confidence
     sorted_inds = np.argsort(-confidence)
@@ -157,21 +164,24 @@ def voc_eval(detpath, annopath, imageset_file, classname, cache_dir, ovthresh=0.
             jmax = np.argmax(overlaps)
 
         if ovmax > ovthresh:
-            if not r['difficult'][jmax]:
-                if not r['det'][jmax]:
-                    tp[d] = 1.
-                    r['det'][jmax] = 1
-                else:
-                    fp[d] = 1.
+            if not r['det'][jmax]:
+                tp[d] = 1.
+                r['det'][jmax] = 1
+            else:
+                fp[d] = 1.
         else:
             fp[d] = 1.
 
     # compute precision recall
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
+    # precision is the fraction of detections that are true positives (intersection of truth and detected over detecteds)
+    # recall is the fraction of true positives that are detected (intersection of truth and detected over truths)
+    # combining classification with overlap, we need...
     rec = tp / float(npos)
     # avoid division by zero in case first detection matches a difficult ground ruth
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
-    ap = voc_ap(rec, prec, use_07_metric)
+    #print('npos=%s # rec=%s # prec=%s, tp=%s'%(str(npos),str(rec),str(prec),str(tp)))
+    ap = ssd_ap(rec, prec)
 
     return rec, prec, ap
